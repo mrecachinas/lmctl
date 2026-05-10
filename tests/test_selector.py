@@ -93,7 +93,7 @@ def install_terminal_fakes(monkeypatch: pytest.MonkeyPatch, keys: list[str]) -> 
     }
 
     termios_module = types.ModuleType("termios")
-    termios_module.TCSADRAIN = 7
+    setattr(termios_module, "TCSADRAIN", 7)
 
     def tcgetattr(fd: int) -> list[str]:
         state["tcgetattr"].append(fd)
@@ -102,15 +102,15 @@ def install_terminal_fakes(monkeypatch: pytest.MonkeyPatch, keys: list[str]) -> 
     def tcsetattr(fd: int, when: int, settings: list[str]) -> None:
         state["tcsetattr"].append((fd, when, settings))
 
-    termios_module.tcgetattr = tcgetattr  # type: ignore[attr-defined]
-    termios_module.tcsetattr = tcsetattr  # type: ignore[attr-defined]
+    setattr(termios_module, "tcgetattr", tcgetattr)
+    setattr(termios_module, "tcsetattr", tcsetattr)
 
     tty_module = types.ModuleType("tty")
 
     def setcbreak(fd: int) -> None:
         state["setcbreak"].append(fd)
 
-    tty_module.setcbreak = setcbreak  # type: ignore[attr-defined]
+    setattr(tty_module, "setcbreak", setcbreak)
 
     select_module = types.ModuleType("select")
 

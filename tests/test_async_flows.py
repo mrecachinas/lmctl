@@ -185,7 +185,7 @@ def args_for(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
 def write_key(path: Path, installation_id: str = "installation-id") -> Any:
     key = real_generate_installation_key(installation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(key.to_json(), encoding="utf-8")
+    path.write_text(cli.json_text(key.to_json()), encoding="utf-8")
     return key
 
 
@@ -741,7 +741,7 @@ def test_cloud_client_uses_saved_password_when_no_arg_or_env(
     fake_keyring[(cli.KEYRING_SERVICE, "config-user")] = "saved-pass"
     args = args_for(tmp_path, key_file=key_file, config_file=config_file)
 
-    async def exercise_context() -> FakeCloudClient:
+    async def exercise_context() -> Any:
         async with cli.cloud_client(args) as client:
             return client
 

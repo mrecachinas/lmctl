@@ -11,7 +11,7 @@ import sys
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import keyring
 from keyring.errors import KeyringError
@@ -31,6 +31,25 @@ DEFAULT_SERIAL_KEY = "default_serial"
 
 class CliError(Exception):
     """A user-correctable CLI error."""
+
+
+class MachineDataResource(Protocol):
+    """Machine methods used by data-fetch commands."""
+
+    dashboard: Any
+    settings: Any
+    statistics: Any
+    schedule: Any
+
+    def get_dashboard(self) -> Awaitable[None]: ...
+
+    def get_settings(self) -> Awaitable[None]: ...
+
+    def get_statistics(self) -> Awaitable[None]: ...
+
+    def get_schedule(self) -> Awaitable[None]: ...
+
+    def get_firmware(self) -> Awaitable[Any]: ...
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -457,7 +476,7 @@ def generate_key(args: argparse.Namespace) -> None:
     installation_key = generate_installation_key(installation_id)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(installation_key.to_json(), encoding="utf-8")
+    output.write_text(json_text(installation_key.to_json()), encoding="utf-8")
     print_json(
         {
             "installation_id": installation_id,
@@ -523,7 +542,7 @@ async def fetch_machine_data(args: argparse.Namespace) -> None:
     print_json(data)
 
 
-async def fetch_data_resource(machine: LaMarzoccoMachine, data_name: str) -> Any:
+async def fetch_data_resource(machine: MachineDataResource, data_name: str) -> Any:
     """Fetch one data resource from a machine."""
     if data_name == "dashboard":
         await machine.get_dashboard()
@@ -645,8 +664,15 @@ def ensure_installation_key(path: Path) -> tuple[InstallationKey, bool]:
 
     installation_key = generate_installation_key(str(uuid.uuid4()).lower())
     key_file.parent.mkdir(parents=True, exist_ok=True)
-    key_file.write_text(installation_key.to_json(), encoding="utf-8")
+    key_file.write_text(json_text(installation_key.to_json()), encoding="utf-8")
     return installation_key, True
+
+
+def json_text(value: str | bytes | bytearray) -> str:
+    """Return JSON data as text."""
+    if isinstance(value, str):
+        return value
+    return bytes(value).decode("utf-8")
 
 
 def load_config(path: Path) -> dict[str, Any]:
