@@ -175,6 +175,8 @@ def args_for(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
         "output": None,
         "installation_id": None,
         "force": False,
+        "save_password": True,
+        "no_keyring": False,
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -196,11 +198,36 @@ def read_output_json(capsys: pytest.CaptureFixture[str]) -> Any:
     return json.loads(capsys.readouterr().out)
 
 
+@pytest.fixture
+def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
+    passwords: dict[tuple[str, str], str] = {}
+
+    monkeypatch.setattr(
+        cli.keyring,
+        "get_password",
+        lambda service, username: passwords.get((service, username)),
+    )
+    monkeypatch.setattr(
+        cli.keyring,
+        "set_password",
+        lambda service, username, password: passwords.__setitem__(
+            (service, username), password
+        ),
+    )
+    monkeypatch.setattr(
+        cli.keyring,
+        "delete_password",
+        lambda service, username: passwords.pop((service, username), None),
+    )
+    return passwords
+
+
 def test_login_generates_key_registers_and_saves_selected_machine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     fake_cloud: type[FakeCloudClient],
+    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     key_file = tmp_path / "keys" / "generated.json"
     config_file = tmp_path / "config" / "config.json"
@@ -225,19 +252,109 @@ def test_login_generates_key_registers_and_saves_selected_machine(
         "username": "env-user",
     }
     assert "env-pass" not in config_file.read_text(encoding="utf-8")
+    assert fake_keyring[(cli.KEYRING_SERVICE, "env-user")] == "env-pass"
     assert read_output_json(capsys) == {
         "config_file": str(config_file.resolve()),
         "default_serial": "SERIAL-2",
         "generated_key": True,
         "key_file": str(key_file.resolve()),
+        "password_saved": True,
         "username": "env-user",
     }
+
+
+def test_login_save_password_stores_verified_password_after_success(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    fake_cloud: type[FakeCloudClient],
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    key_file = tmp_path / "existing-key.json"
+    config_file = tmp_path / "config.json"
+    write_key(key_file, "existing-installation")
+    fake_cloud.things = [FakeThing("SERIAL-1", "Kitchen", "Linea Mini", True)]
+
+    run(
+        cli.login(
+            args_for(
+                tmp_path,
+                key_file=key_file,
+                config_file=config_file,
+                username="explicit-user",
+                password="explicit-pass",
+                save_password=True,
+            )
+        )
+    )
+
+    assert fake_keyring[(cli.KEYRING_SERVICE, "explicit-user")] == "explicit-pass"
+    assert "explicit-pass" not in config_file.read_text(encoding="utf-8")
+    assert read_output_json(capsys)["password_saved"] is True
+
+
+def test_login_no_keyring_skips_default_password_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_cloud: type[FakeCloudClient],
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    key_file = tmp_path / "existing-key.json"
+    config_file = tmp_path / "config.json"
+    write_key(key_file, "existing-installation")
+    fake_cloud.things = [FakeThing("SERIAL-1")]
+    monkeypatch.setenv("LMCTL_USERNAME", "env-user")
+    monkeypatch.setenv("LMCTL_PASSWORD", "env-pass")
+
+    run(
+        cli.login(
+            args_for(
+                tmp_path,
+                key_file=key_file,
+                config_file=config_file,
+                no_keyring=True,
+            )
+        )
+    )
+
+    assert fake_keyring == {}
+    assert read_output_json(capsys)["password_saved"] is False
+
+
+def test_login_no_save_password_skips_password_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_cloud: type[FakeCloudClient],
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    key_file = tmp_path / "existing-key.json"
+    config_file = tmp_path / "config.json"
+    write_key(key_file, "existing-installation")
+    fake_cloud.things = [FakeThing("SERIAL-1")]
+    monkeypatch.setenv("LMCTL_USERNAME", "env-user")
+    monkeypatch.setenv("LMCTL_PASSWORD", "env-pass")
+
+    run(
+        cli.login(
+            args_for(
+                tmp_path,
+                key_file=key_file,
+                config_file=config_file,
+                save_password=False,
+            )
+        )
+    )
+
+    assert fake_keyring == {}
+    assert read_output_json(capsys)["password_saved"] is False
 
 
 def test_login_loads_existing_key_without_registering(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     fake_cloud: type[FakeCloudClient],
+    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     key_file = tmp_path / "existing-key.json"
     config_file = tmp_path / "config.json"
@@ -263,7 +380,10 @@ def test_login_loads_existing_key_without_registering(
         "default_serial": "SERIAL-1",
         "username": "explicit-user",
     }
-    assert read_output_json(capsys)["generated_key"] is False
+    payload = read_output_json(capsys)
+    assert payload["generated_key"] is False
+    assert payload["password_saved"] is True
+    assert fake_keyring[(cli.KEYRING_SERVICE, "explicit-user")] == "explicit-pass"
 
 
 def test_switch_machine_updates_default_serial_only(
@@ -607,3 +727,85 @@ def test_cloud_client_resolves_credentials_key_and_closes_session(
     assert client.installation_key.installation_id == "cloud-context-key"
     assert client.client is FakeSession.instances[0]
     assert FakeSession.instances[0].closed is True
+
+
+def test_cloud_client_uses_saved_password_when_no_arg_or_env(
+    tmp_path: Path,
+    fake_cloud: type[FakeCloudClient],
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    key_file = tmp_path / "key.json"
+    config_file = tmp_path / "config.json"
+    write_key(key_file, "cloud-context-key")
+    write_config(config_file, {"username": "config-user"})
+    fake_keyring[(cli.KEYRING_SERVICE, "config-user")] = "saved-pass"
+    args = args_for(tmp_path, key_file=key_file, config_file=config_file)
+
+    async def exercise_context() -> FakeCloudClient:
+        async with cli.cloud_client(args) as client:
+            return client
+
+    client = run(exercise_context())
+
+    assert client.username == "config-user"
+    assert client.password == "saved-pass"
+
+
+def test_password_commands_manage_keychain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    config_file = tmp_path / "config.json"
+    write_config(config_file, {"username": "config-user"})
+    monkeypatch.setenv("LMCTL_PASSWORD", "env-pass")
+
+    cli.save_password(args_for(tmp_path, config_file=config_file))
+
+    assert fake_keyring[(cli.KEYRING_SERVICE, "config-user")] == "env-pass"
+    assert read_output_json(capsys) == {
+        "service": cli.KEYRING_SERVICE,
+        "username": "config-user",
+        "password_saved": True,
+    }
+
+    cli.password_status(args_for(tmp_path, config_file=config_file))
+    assert read_output_json(capsys) == {
+        "service": cli.KEYRING_SERVICE,
+        "username": "config-user",
+        "password_saved": True,
+    }
+
+    cli.forget_password(args_for(tmp_path, config_file=config_file))
+    assert (cli.KEYRING_SERVICE, "config-user") not in fake_keyring
+    assert read_output_json(capsys) == {
+        "service": cli.KEYRING_SERVICE,
+        "username": "config-user",
+        "password_deleted": True,
+    }
+
+    cli.forget_password(args_for(tmp_path, config_file=config_file))
+    assert read_output_json(capsys)["password_deleted"] is False
+
+
+@pytest.mark.parametrize(
+    ("func", "message"),
+    [
+        (cli.save_password, "cannot save password"),
+        (cli.password_status, "cannot read password status"),
+        (cli.forget_password, "cannot forget password"),
+    ],
+)
+def test_password_commands_reject_no_keyring(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    func: Any,
+    message: str,
+) -> None:
+    config_file = tmp_path / "config.json"
+    write_config(config_file, {"username": "config-user"})
+    monkeypatch.setenv("LMCTL_PASSWORD", "env-pass")
+
+    with pytest.raises(cli.CliError, match=message):
+        func(args_for(tmp_path, config_file=config_file, no_keyring=True))

@@ -13,6 +13,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+import keyring
+from keyring.errors import KeyringError
 from aiohttp import ClientError, ClientSession
 from pylamarzocco import LaMarzoccoCloudClient, LaMarzoccoMachine
 from pylamarzocco.exceptions import LaMarzoccoError
@@ -20,6 +22,7 @@ from pylamarzocco.util import InstallationKey, generate_installation_key
 
 
 APP_NAME = "lmctl"
+KEYRING_SERVICE = APP_NAME
 USERNAME_ENV_VARS = ("LMCTL_USERNAME", "LAMARZOCCO_USERNAME")
 PASSWORD_ENV_VARS = ("LMCTL_PASSWORD", "LAMARZOCCO_PASSWORD")
 USERNAME_KEY = "username"
@@ -62,8 +65,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--password",
         help=(
             "La Marzocco Home password. Defaults to LMCTL_PASSWORD, "
-            "LAMARZOCCO_PASSWORD, or an interactive prompt."
+            "LAMARZOCCO_PASSWORD, saved keychain password, or an interactive prompt."
         ),
+    )
+    parser.add_argument(
+        "--no-keyring",
+        action="store_true",
+        help="Do not read from or write to the OS keychain for this invocation.",
     )
     parser.add_argument(
         "--key-file",
@@ -94,6 +102,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--serial",
         help="Select this machine serial instead of prompting.",
     )
+    login_parser.add_argument(
+        "--save-password",
+        dest="save_password",
+        action="store_true",
+        default=True,
+        help="Save the authenticated password in the OS keychain (default).",
+    )
+    login_parser.add_argument(
+        "--no-save-password",
+        dest="save_password",
+        action="store_false",
+        help="Do not save the authenticated password in the OS keychain.",
+    )
     login_parser.set_defaults(func=login)
 
     switch_parser = subcommands.add_parser(
@@ -105,6 +126,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Select this machine serial instead of prompting.",
     )
     switch_parser.set_defaults(func=switch_machine)
+
+    password_parser = subcommands.add_parser(
+        "password", help="Manage the saved keychain password."
+    )
+    password_subcommands = password_parser.add_subparsers(
+        dest="password_command", required=True
+    )
+    password_save_parser = password_subcommands.add_parser(
+        "save", help="Save a password in the OS keychain."
+    )
+    password_save_parser.set_defaults(func=save_password)
+    password_status_parser = password_subcommands.add_parser(
+        "status", help="Show whether a password is saved."
+    )
+    password_status_parser.set_defaults(func=password_status)
+    password_forget_parser = password_subcommands.add_parser(
+        "forget", help="Delete the saved keychain password."
+    )
+    password_forget_parser.set_defaults(func=forget_password)
 
     config_parser = subcommands.add_parser("config", help="Manage lmctl defaults.")
     config_subcommands = config_parser.add_subparsers(
@@ -283,12 +323,7 @@ async def login(args: argparse.Namespace) -> None:
         config_file=args.config_file,
         config_key=USERNAME_KEY,
     )
-    password = credential(
-        args.password,
-        PASSWORD_ENV_VARS,
-        "password",
-        prompt_secret=True,
-    )
+    password = password_credential(args, username)
 
     async with ClientSession() as session:
         client = LaMarzoccoCloudClient(
@@ -300,6 +335,11 @@ async def login(args: argparse.Namespace) -> None:
         if generated_key:
             await client.async_register_client()
         things = await client.list_things()
+
+    if args.save_password:
+        password_saved = try_set_login_password(username, password, args)
+    else:
+        password_saved = False
 
     selected = choose_thing(things, args.serial)
 
@@ -314,8 +354,76 @@ async def login(args: argparse.Namespace) -> None:
             "config_file": config_file,
             "key_file": key_file,
             "generated_key": generated_key,
+            "password_saved": password_saved,
             USERNAME_KEY: username,
             DEFAULT_SERIAL_KEY: selected.serial_number,
+        }
+    )
+
+
+def save_password(args: argparse.Namespace) -> None:
+    """Save a password in the OS keychain."""
+    if keyring_disabled(args):
+        raise CliError("cannot save password when --no-keyring is set")
+
+    username = credential(
+        args.username,
+        USERNAME_ENV_VARS,
+        "username",
+        config_file=args.config_file,
+        config_key=USERNAME_KEY,
+    )
+    password = password_credential(args, username, allow_saved=False)
+    set_saved_password(username, password, args)
+    print_json(
+        {
+            "service": KEYRING_SERVICE,
+            USERNAME_KEY: username,
+            "password_saved": True,
+        }
+    )
+
+
+def password_status(args: argparse.Namespace) -> None:
+    """Show whether a password is saved in the OS keychain."""
+    if keyring_disabled(args):
+        raise CliError("cannot read password status when --no-keyring is set")
+
+    username = credential(
+        args.username,
+        USERNAME_ENV_VARS,
+        "username",
+        config_file=args.config_file,
+        config_key=USERNAME_KEY,
+    )
+    print_json(
+        {
+            "service": KEYRING_SERVICE,
+            USERNAME_KEY: username,
+            "password_saved": get_saved_password(username, args, required=True)
+            is not None,
+        }
+    )
+
+
+def forget_password(args: argparse.Namespace) -> None:
+    """Delete the saved password from the OS keychain."""
+    if keyring_disabled(args):
+        raise CliError("cannot forget password when --no-keyring is set")
+
+    username = credential(
+        args.username,
+        USERNAME_ENV_VARS,
+        "username",
+        config_file=args.config_file,
+        config_key=USERNAME_KEY,
+    )
+    deleted = delete_saved_password(username, args)
+    print_json(
+        {
+            "service": KEYRING_SERVICE,
+            USERNAME_KEY: username,
+            "password_deleted": deleted,
         }
     )
 
@@ -492,20 +600,16 @@ class cloud_client:
 
     async def __aenter__(self) -> LaMarzoccoCloudClient:
         self._session = ClientSession()
+        username = credential(
+            self._args.username,
+            USERNAME_ENV_VARS,
+            "username",
+            config_file=self._args.config_file,
+            config_key=USERNAME_KEY,
+        )
         return LaMarzoccoCloudClient(
-            username=credential(
-                self._args.username,
-                USERNAME_ENV_VARS,
-                "username",
-                config_file=self._args.config_file,
-                config_key=USERNAME_KEY,
-            ),
-            password=credential(
-                self._args.password,
-                PASSWORD_ENV_VARS,
-                "password",
-                prompt_secret=True,
-            ),
+            username=username,
+            password=password_credential(self._args, username),
             installation_key=load_installation_key(self._args.key_file),
             client=self._session,
         )
@@ -602,6 +706,114 @@ def resolve_stateful_command(args: argparse.Namespace) -> tuple[str, str]:
         return resolve_serial(args), args.serial_or_state
 
     return args.serial_or_state, args.state
+
+
+def password_credential(
+    args: argparse.Namespace,
+    username: str,
+    *,
+    allow_saved: bool = True,
+) -> str:
+    """Resolve a password from args, env, keychain, or prompt."""
+    if args.password:
+        return args.password
+
+    for env_var in PASSWORD_ENV_VARS:
+        value = os.environ.get(env_var)
+        if value:
+            return value
+
+    if allow_saved:
+        saved_password = get_saved_password(username, args)
+        if saved_password is not None:
+            return saved_password
+
+    if sys.stdin.isatty():
+        value = getpass.getpass("La Marzocco password: ")
+        if value:
+            return value
+
+    names = ", ".join(PASSWORD_ENV_VARS)
+    raise CliError(
+        "missing password; pass --password, set one of: "
+        f"{names}, or run `lmctl password save`"
+    )
+
+
+def get_saved_password(
+    username: str,
+    args: argparse.Namespace,
+    *,
+    required: bool = False,
+) -> str | None:
+    """Return a saved password from the OS keychain."""
+    if keyring_disabled(args):
+        if required:
+            raise CliError("keyring is disabled by --no-keyring")
+        return None
+
+    try:
+        return keyring.get_password(KEYRING_SERVICE, username)
+    except KeyringError as exc:
+        if required:
+            raise CliError(f"keyring unavailable: {exc}") from exc
+        print(
+            f"{APP_NAME}: warning: keyring unavailable; prompting for password",
+            file=sys.stderr,
+        )
+        return None
+
+
+def set_saved_password(
+    username: str,
+    password: str,
+    args: argparse.Namespace,
+) -> None:
+    """Save a password in the OS keychain."""
+    if keyring_disabled(args):
+        raise CliError("keyring is disabled by --no-keyring")
+
+    try:
+        keyring.set_password(KEYRING_SERVICE, username, password)
+    except KeyringError as exc:
+        raise CliError(f"keyring unavailable: {exc}") from exc
+
+
+def try_set_login_password(
+    username: str,
+    password: str,
+    args: argparse.Namespace,
+) -> bool:
+    """Best-effort password save for login."""
+    if keyring_disabled(args):
+        return False
+
+    try:
+        set_saved_password(username, password, args)
+    except CliError as exc:
+        print(f"{APP_NAME}: warning: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def delete_saved_password(username: str, args: argparse.Namespace) -> bool:
+    """Delete a saved password from the OS keychain."""
+    if keyring_disabled(args):
+        raise CliError("keyring is disabled by --no-keyring")
+
+    if get_saved_password(username, args, required=True) is None:
+        return False
+
+    try:
+        keyring.delete_password(KEYRING_SERVICE, username)
+    except KeyringError as exc:
+        raise CliError(f"keyring unavailable: {exc}") from exc
+    return True
+
+
+def keyring_disabled(args: argparse.Namespace) -> bool:
+    """Return whether keyring access is disabled for this invocation."""
+    return bool(getattr(args, "no_keyring", False))
 
 
 def choose_thing(things: Sequence[Any], serial: str | None = None) -> Any:

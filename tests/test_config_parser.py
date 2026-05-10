@@ -26,10 +26,31 @@ def parser(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
-        (["login"], {"command": "login", "serial": None, "func": cli.login}),
         (
-            ["login", "--serial", "GS3-001"],
-            {"command": "login", "serial": "GS3-001", "func": cli.login},
+            ["login"],
+            {
+                "command": "login",
+                "serial": None,
+                "save_password": True,
+                "func": cli.login,
+            },
+        ),
+        (
+            ["login", "--serial", "GS3-001", "--no-save-password"],
+            {
+                "command": "login",
+                "serial": "GS3-001",
+                "save_password": False,
+                "func": cli.login,
+            },
+        ),
+        (
+            ["login", "--save-password"],
+            {
+                "command": "login",
+                "save_password": True,
+                "func": cli.login,
+            },
         ),
         (
             ["switch", "--serial", "GS3-001"],
@@ -37,6 +58,30 @@ def parser(monkeypatch, tmp_path):
                 "command": "switch",
                 "serial": "GS3-001",
                 "func": cli.switch_machine,
+            },
+        ),
+        (
+            ["password", "save"],
+            {
+                "command": "password",
+                "password_command": "save",
+                "func": cli.save_password,
+            },
+        ),
+        (
+            ["password", "status"],
+            {
+                "command": "password",
+                "password_command": "status",
+                "func": cli.password_status,
+            },
+        ),
+        (
+            ["password", "forget"],
+            {
+                "command": "password",
+                "password_command": "forget",
+                "func": cli.forget_password,
             },
         ),
         (
@@ -184,11 +229,20 @@ def test_build_parser_command_shapes(parser, argv, expected):
 
 def test_build_parser_global_options_and_defaults(parser, tmp_path):
     args = parser.parse_args(
-        ["--username", "user", "--password", "pass", "things", "--json"]
+        [
+            "--username",
+            "user",
+            "--password",
+            "pass",
+            "--no-keyring",
+            "things",
+            "--json",
+        ]
     )
 
     assert args.username == "user"
     assert args.password == "pass"
+    assert args.no_keyring is True
     assert args.key_file == tmp_path / "installation_key.json"
     assert args.config_file == tmp_path / "config.json"
 
@@ -489,6 +543,121 @@ def test_credential_reports_missing_value(monkeypatch):
         match="missing username; pass --username or set one of: LMCTL_TEST_USERNAME",
     ):
         cli.credential(None, ("LMCTL_TEST_USERNAME",), "username")
+
+
+def password_args(**overrides):
+    defaults = {
+        "password": None,
+        "no_keyring": False,
+    }
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def test_password_credential_prefers_explicit_value(monkeypatch):
+    monkeypatch.setenv("LMCTL_PASSWORD", "env-pass")
+
+    assert (
+        cli.password_credential(
+            password_args(password="explicit-pass"),
+            "user@example.com",
+        )
+        == "explicit-pass"
+    )
+
+
+def test_password_credential_prefers_environment_over_keyring(monkeypatch):
+    saved_password_calls = []
+    monkeypatch.setenv("LMCTL_PASSWORD", "env-pass")
+    monkeypatch.setattr(
+        cli,
+        "get_saved_password",
+        lambda username, args: saved_password_calls.append(username) or "saved-pass",
+    )
+
+    assert cli.password_credential(password_args(), "user@example.com") == "env-pass"
+    assert saved_password_calls == []
+
+
+def test_password_credential_uses_saved_password(monkeypatch):
+    monkeypatch.delenv("LMCTL_PASSWORD", raising=False)
+    monkeypatch.delenv("LAMARZOCCO_PASSWORD", raising=False)
+    monkeypatch.setattr(
+        cli,
+        "get_saved_password",
+        lambda username, args: "saved-pass"
+        if username == "user@example.com"
+        else None,
+    )
+
+    assert cli.password_credential(password_args(), "user@example.com") == "saved-pass"
+
+
+def test_password_credential_can_skip_saved_password(monkeypatch):
+    monkeypatch.delenv("LMCTL_PASSWORD", raising=False)
+    monkeypatch.delenv("LAMARZOCCO_PASSWORD", raising=False)
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(
+        cli.getpass,
+        "getpass",
+        lambda prompt: "typed-password",
+    )
+    monkeypatch.setattr(
+        cli,
+        "get_saved_password",
+        lambda username, args: "saved-pass",
+    )
+
+    assert (
+        cli.password_credential(
+            password_args(),
+            "user@example.com",
+            allow_saved=False,
+        )
+        == "typed-password"
+    )
+
+
+def test_password_credential_reports_missing_value(monkeypatch):
+    monkeypatch.delenv("LMCTL_PASSWORD", raising=False)
+    monkeypatch.delenv("LAMARZOCCO_PASSWORD", raising=False)
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    monkeypatch.setattr(cli, "get_saved_password", lambda username, args: None)
+
+    with pytest.raises(cli.CliError, match="missing password"):
+        cli.password_credential(password_args(), "user@example.com")
+
+
+def test_keyring_helpers_convert_keyring_errors(monkeypatch):
+    args = password_args()
+
+    def raise_keyring_error(*_args):
+        raise cli.KeyringError("backend unavailable")
+
+    monkeypatch.setattr(cli.keyring, "get_password", raise_keyring_error)
+    monkeypatch.setattr(cli.keyring, "set_password", raise_keyring_error)
+
+    assert cli.get_saved_password("user@example.com", args) is None
+    with pytest.raises(cli.CliError, match="keyring unavailable"):
+        cli.get_saved_password("user@example.com", args, required=True)
+    with pytest.raises(cli.CliError, match="keyring unavailable"):
+        cli.set_saved_password("user@example.com", "pass", args)
+
+
+def test_keyring_helpers_respect_no_keyring(monkeypatch):
+    args = password_args(no_keyring=True)
+    monkeypatch.setattr(
+        cli.keyring,
+        "get_password",
+        lambda *_args: pytest.fail("keyring should not be read"),
+    )
+
+    assert cli.get_saved_password("user@example.com", args) is None
+    with pytest.raises(cli.CliError, match="disabled"):
+        cli.get_saved_password("user@example.com", args, required=True)
+    with pytest.raises(cli.CliError, match="disabled"):
+        cli.set_saved_password("user@example.com", "pass", args)
+    assert cli.keyring_disabled(args) is True
 
 
 class DictModel:
