@@ -1,0 +1,32 @@
+[project]
+name = "lmctl"
+version = "0.1.0"
+description = "Command-line interface for pylamarzocco"
+readme = "README.md"
+authors = [
+    { name = "Michael Recachinas", email = "mrecachinas@github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.5",
+    "pylamarzocco>=2.2.4",
+]
+
+[project.scripts]
+lmctl = "lmctl.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+    "--basetemp=.pytest-tmp",
+]
+testpaths = ["tests"]
