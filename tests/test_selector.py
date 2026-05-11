@@ -72,14 +72,18 @@ class FakeSelect:
         self.readable = readable
         self.calls: list[tuple[Any, Any, Any, float]] = []
 
-    def select(self, readers: Any, writers: Any, errors: Any, timeout: float) -> tuple[list[Any], list[Any], list[Any]]:
+    def select(
+        self, readers: Any, writers: Any, errors: Any, timeout: float
+    ) -> tuple[list[Any], list[Any], list[Any]]:
         self.calls.append((readers, writers, errors, timeout))
         if self.readable.has_pending():
             return [self.readable], [], []
         return [], [], []
 
 
-def install_terminal_fakes(monkeypatch: pytest.MonkeyPatch, keys: list[str]) -> dict[str, Any]:
+def install_terminal_fakes(
+    monkeypatch: pytest.MonkeyPatch, keys: list[str]
+) -> dict[str, Any]:
     stdin = TTYInput()
     stderr = TTYOutput()
     previous_settings = ["previous-terminal-settings"]
@@ -176,7 +180,9 @@ def test_choose_thing_single_machine_auto_selects() -> None:
     assert selector.choose_thing([machine]) is machine
 
 
-def test_choose_thing_single_machine_can_force_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_choose_thing_single_machine_can_force_selector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     machine = Machine("LM001", "Kitchen")
     calls: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(selector.sys, "stdin", TTYInput())
@@ -191,15 +197,22 @@ def test_choose_thing_single_machine_can_force_selector(monkeypatch: pytest.Monk
     assert calls == [("Choose a machine:", ["LM001 - Kitchen"])]
 
 
-def test_choose_thing_multiple_machines_non_tty_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_choose_thing_multiple_machines_non_tty_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(selector.sys, "stdin", TTYInput(is_tty=False))
 
     with pytest.raises(cli.CliError, match="pass --serial"):
         selector.choose_thing([Machine("LM001"), Machine("LM002")])
 
 
-def test_choose_thing_multiple_machines_delegates_to_selector(monkeypatch: pytest.MonkeyPatch) -> None:
-    machines = [Machine("LM001", "Kitchen"), Machine("LM002", "Office", EnumLike("Linea Micra"))]
+def test_choose_thing_multiple_machines_delegates_to_selector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machines = [
+        Machine("LM001", "Kitchen"),
+        Machine("LM002", "Office", EnumLike("Linea Micra")),
+    ]
     calls: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(selector.sys, "stdin", TTYInput())
 
@@ -220,7 +233,10 @@ def test_choose_thing_multiple_machines_delegates_to_selector(monkeypatch: pytes
     [
         (Machine("LM001"), "LM001"),
         (Machine("LM001", "Kitchen"), "LM001 - Kitchen"),
-        (Machine("LM001", "Kitchen", EnumLike("Linea Micra")), "LM001 - Kitchen - Linea Micra"),
+        (
+            Machine("LM001", "Kitchen", EnumLike("Linea Micra")),
+            "LM001 - Kitchen - Linea Micra",
+        ),
     ],
 )
 def test_describe_thing(machine: Machine, expected: str) -> None:
@@ -246,7 +262,9 @@ def test_read_key_escape_key_alone(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1b[B"])
-def test_read_key_arrow_key_escape_sequences(monkeypatch: pytest.MonkeyPatch, sequence: str) -> None:
+def test_read_key_arrow_key_escape_sequences(
+    monkeypatch: pytest.MonkeyPatch, sequence: str
+) -> None:
     stdin = ReadableInput(sequence)
     select_module = FakeSelect(stdin)
     monkeypatch.setattr(selector.sys, "stdin", stdin)
@@ -262,9 +280,7 @@ def test_render_selector_first_render(monkeypatch: pytest.MonkeyPatch) -> None:
     selector.render_selector("Pick one:", ["alpha", "beta"], 1, first_render=True)
 
     assert stderr.getvalue() == (
-        "Pick one: (use arrow keys, enter to select)\n"
-        "\r\033[K○ alpha\n"
-        "\r\033[K● beta\n"
+        "Pick one: (use arrow keys, enter to select)\n\r\033[K○ alpha\n\r\033[K● beta\n"
     )
     assert stderr.flushed is True
 
@@ -275,11 +291,7 @@ def test_render_selector_subsequent_render(monkeypatch: pytest.MonkeyPatch) -> N
 
     selector.render_selector("Pick one:", ["alpha", "beta"], 0)
 
-    assert stderr.getvalue() == (
-        "\033[2F"
-        "\r\033[K● alpha\n"
-        "\r\033[K○ beta\n"
-    )
+    assert stderr.getvalue() == ("\033[2F\r\033[K● alpha\n\r\033[K○ beta\n")
     assert stderr.flushed is True
 
 
@@ -291,7 +303,9 @@ def test_select_option_non_tty_error(monkeypatch: pytest.MonkeyPatch) -> None:
         selector.select_option("Pick:", ["alpha", "beta"])
 
 
-def test_select_option_down_up_enter_terminal_behavior(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_option_down_up_enter_terminal_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     state = install_terminal_fakes(monkeypatch, ["\x1b[B", "\x1b[B", "\x1b[A", "\n"])
 
     assert selector.select_option("Pick:", ["alpha", "beta", "gamma"]) == 1
@@ -320,7 +334,9 @@ def test_select_option_ignores_bare_escape(monkeypatch: pytest.MonkeyPatch) -> N
     assert_terminal_cleanup(state)
 
 
-def test_select_option_single_option_arrow_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_option_single_option_arrow_is_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     state = install_terminal_fakes(monkeypatch, ["\x1b[B", "\n"])
 
     assert selector.select_option("Pick:", ["alpha"]) == 0
@@ -333,7 +349,9 @@ def test_select_option_single_option_arrow_is_noop(monkeypatch: pytest.MonkeyPat
     "key",
     [pytest.param("q", id="q"), pytest.param("\x04", id="ctrl-d")],
 )
-def test_select_option_cancel_keys_cleanup(monkeypatch: pytest.MonkeyPatch, key: str) -> None:
+def test_select_option_cancel_keys_cleanup(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
     state = install_terminal_fakes(monkeypatch, [key])
 
     with pytest.raises(cli.CliError, match="selection cancelled"):
@@ -342,7 +360,9 @@ def test_select_option_cancel_keys_cleanup(monkeypatch: pytest.MonkeyPatch, key:
     assert_terminal_cleanup(state)
 
 
-def test_select_option_ctrl_c_propagates_and_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_option_ctrl_c_propagates_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     state = install_terminal_fakes(monkeypatch, ["\x03"])
 
     with pytest.raises(KeyboardInterrupt):

@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pylamarzocco.util import generate_installation_key as real_generate_installation_key
+from pylamarzocco.util import (
+    generate_installation_key as real_generate_installation_key,
+)
 
 from lmctl import _client as client_module
 from lmctl import _commands as commands_module
@@ -88,7 +90,9 @@ class FakeMachine:
     instances: list[FakeMachine] = []
     command_results = {"power": True, "steam": True}
 
-    def __init__(self, serial_number: str, cloud_client: FakeCloudClient | object) -> None:
+    def __init__(
+        self, serial_number: str, cloud_client: FakeCloudClient | object
+    ) -> None:
         self.serial_number = serial_number
         self.cloud_client = cloud_client
         self.calls: list[Any] = []
@@ -241,7 +245,13 @@ def test_login_generates_key_registers_and_saves_selected_machine(
     monkeypatch.setenv("LMCTL_USERNAME", "env-user")
     monkeypatch.setenv("LMCTL_PASSWORD", "env-pass")
 
-    run(cli.login(args_for(tmp_path, key_file=key_file, config_file=config_file, serial="SERIAL-2")))
+    run(
+        cli.login(
+            args_for(
+                tmp_path, key_file=key_file, config_file=config_file, serial="SERIAL-2"
+            )
+        )
+    )
 
     client = fake_cloud.instances[0]
     assert client.username == "env-user"
@@ -403,7 +413,11 @@ def test_switch_machine_updates_default_serial_only(
     fake_cloud.things = [FakeThing("OLD"), FakeThing("NEW", "New machine")]
     monkeypatch.setenv("LMCTL_PASSWORD", "switch-pass")
 
-    run(cli.switch_machine(args_for(tmp_path, key_file=key_file, config_file=config_file, serial="NEW")))
+    run(
+        cli.switch_machine(
+            args_for(tmp_path, key_file=key_file, config_file=config_file, serial="NEW")
+        )
+    )
 
     client = fake_cloud.instances[0]
     assert client.username == "saved-user"
@@ -432,13 +446,21 @@ def test_switch_machine_shows_selector_even_for_one_machine(
     monkeypatch.setenv("LMCTL_PASSWORD", "switch-pass")
     choose_calls: list[tuple[list[str], str | None, bool]] = []
 
-    def fake_choose_thing(things: list[FakeThing], serial: str | None, *, always_select: bool = False) -> FakeThing:
-        choose_calls.append(([thing.serial_number for thing in things], serial, always_select))
+    def fake_choose_thing(
+        things: list[FakeThing], serial: str | None, *, always_select: bool = False
+    ) -> FakeThing:
+        choose_calls.append(
+            ([thing.serial_number for thing in things], serial, always_select)
+        )
         return things[0]
 
     monkeypatch.setattr(commands_module, "choose_thing", fake_choose_thing)
 
-    run(cli.switch_machine(args_for(tmp_path, key_file=key_file, config_file=config_file)))
+    run(
+        cli.switch_machine(
+            args_for(tmp_path, key_file=key_file, config_file=config_file)
+        )
+    )
 
     assert choose_calls == [(["ONLY"], None, True)]
     assert capsys.readouterr().out == "Default machine set to ONLY - Kitchen.\n"
@@ -457,7 +479,11 @@ def test_list_things_json_output(
     monkeypatch.setenv("LMCTL_PASSWORD", "pass")
     fake_cloud.things = [FakeThing("SERIAL-1", "Kitchen", "Linea Mini", True)]
 
-    run(cli.list_things(args_for(tmp_path, key_file=key_file, config_file=config_file, json=True)))
+    run(
+        cli.list_things(
+            args_for(tmp_path, key_file=key_file, config_file=config_file, json=True)
+        )
+    )
 
     assert read_output_json(capsys) == [
         {
@@ -506,11 +532,19 @@ def test_show_machine_fetches_and_prints_combined_payload(
     write_config(config_file, {"username": "saved-user", "default_serial": "DEFAULT"})
     monkeypatch.setenv("LMCTL_PASSWORD", "pass")
 
-    run(cli.show_machine(args_for(tmp_path, key_file=key_file, config_file=config_file)))
+    run(
+        cli.show_machine(args_for(tmp_path, key_file=key_file, config_file=config_file))
+    )
 
     machine = fake_machine.instances[0]
     assert machine.serial_number == "DEFAULT"
-    assert machine.calls == ["firmware", "dashboard", "settings", "statistics", "schedule"]
+    assert machine.calls == [
+        "firmware",
+        "dashboard",
+        "settings",
+        "statistics",
+        "schedule",
+    ]
     output = capsys.readouterr().out
     assert "serial_number  DEFAULT" in output
     assert "dashboard\nfield" in output
@@ -636,7 +670,9 @@ def test_generate_key_writes_loadable_key_and_refuses_existing_file(
     )
     with pytest.raises(cli.CliError, match="already exists"):
         cli.generate_key(
-            args_for(tmp_path, output=key_file, installation_id="second-id", force=False)
+            args_for(
+                tmp_path, output=key_file, installation_id="second-id", force=False
+            )
         )
 
     cli.generate_key(
@@ -656,7 +692,10 @@ def test_ensure_and_load_installation_key_paths(tmp_path: Path) -> None:
     assert loaded_generated is False
     assert key_file.exists()
     assert loaded_key.installation_id == created_key.installation_id
-    assert cli.load_installation_key(key_file).installation_id == created_key.installation_id
+    assert (
+        cli.load_installation_key(key_file).installation_id
+        == created_key.installation_id
+    )
     with pytest.raises(cli.CliError, match="does not exist"):
         cli.load_installation_key(tmp_path / "missing.json")
 

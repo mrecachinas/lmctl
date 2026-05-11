@@ -109,7 +109,9 @@ def print_table(headers: tuple[str, ...], rows: list[tuple[Any, ...]]) -> None:
         for index, cell in enumerate(row):
             widths[index] = max(widths[index], len(cell))
 
-    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print(
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+    )
     print("  ".join("-" * width for width in widths))
     for row in text_rows:
         print("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))

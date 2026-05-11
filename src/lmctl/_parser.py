@@ -151,7 +151,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Set the default machine serial number.",
         parents=[json_parent],
     )
-    config_set_serial_parser.add_argument("serial", help="Default machine serial number.")
+    config_set_serial_parser.add_argument(
+        "serial", help="Default machine serial number."
+    )
     config_set_serial_parser.set_defaults(func=set_default_serial)
     config_clear_serial_parser = config_subcommands.add_parser(
         "clear-serial",

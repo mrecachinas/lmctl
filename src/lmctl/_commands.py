@@ -214,7 +214,9 @@ def password_status(args: argparse.Namespace) -> None:
     elif password_saved:
         print(f"Password saved for {username} in keychain service {KEYRING_SERVICE}.")
     else:
-        print(f"No password saved for {username} in keychain service {KEYRING_SERVICE}.")
+        print(
+            f"No password saved for {username} in keychain service {KEYRING_SERVICE}."
+        )
 
 
 def forget_password(args: argparse.Namespace) -> None:
@@ -243,7 +245,9 @@ def forget_password(args: argparse.Namespace) -> None:
             f"{KEYRING_SERVICE}."
         )
     else:
-        print(f"No saved password for {username} in keychain service {KEYRING_SERVICE}.")
+        print(
+            f"No saved password for {username} in keychain service {KEYRING_SERVICE}."
+        )
 
 
 async def switch_machine(args: argparse.Namespace) -> None:

@@ -480,12 +480,9 @@ def test_resolve_stateful_command_prefers_explicit_serial(tmp_path):
     bad_config = tmp_path / "config.json"
     bad_config.write_text("{not json", encoding="utf-8")
 
-    assert (
-        cli.resolve_stateful_command(
-            argparse.Namespace(serial="GS3-001", state="off", config_file=bad_config)
-        )
-        == ("GS3-001", "off")
-    )
+    assert cli.resolve_stateful_command(
+        argparse.Namespace(serial="GS3-001", state="off", config_file=bad_config)
+    ) == ("GS3-001", "off")
 
 
 def test_credential_prefers_explicit_value(monkeypatch, tmp_path):
@@ -650,9 +647,7 @@ def test_password_credential_uses_saved_password(monkeypatch):
     monkeypatch.setattr(
         credentials,
         "get_saved_password",
-        lambda username, args: "saved-pass"
-        if username == "user@example.com"
-        else None,
+        lambda username, args: "saved-pass" if username == "user@example.com" else None,
     )
 
     assert cli.password_credential(password_args(), "user@example.com") == "saved-pass"
@@ -750,9 +745,7 @@ def test_to_jsonable_converts_models_paths_dates_tuples_and_values():
 def test_print_json_outputs_sorted_pretty_json(capsys):
     cli.print_json({"b": Path("machine.json"), "a": Value("ready")})
 
-    assert capsys.readouterr().out == (
-        '{\n  "a": "ready",\n  "b": "machine.json"\n}\n'
-    )
+    assert capsys.readouterr().out == ('{\n  "a": "ready",\n  "b": "machine.json"\n}\n')
 
 
 def test_print_table_formats_display_values(capsys):
