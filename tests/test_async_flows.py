@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 from pylamarzocco.util import generate_installation_key as real_generate_installation_key
 
+from lmctl import _client as client_module
+from lmctl import _commands as commands_module
 from lmctl import cli
 
 
@@ -144,8 +146,10 @@ def fake_cloud(monkeypatch: pytest.MonkeyPatch) -> type[FakeCloudClient]:
     FakeSession.instances = []
     FakeCloudClient.instances = []
     FakeCloudClient.things = []
-    monkeypatch.setattr(cli, "ClientSession", FakeSession)
-    monkeypatch.setattr(cli, "LaMarzoccoCloudClient", FakeCloudClient)
+    monkeypatch.setattr(client_module, "ClientSession", FakeSession)
+    monkeypatch.setattr(client_module, "LaMarzoccoCloudClient", FakeCloudClient)
+    monkeypatch.setattr(commands_module, "ClientSession", FakeSession)
+    monkeypatch.setattr(commands_module, "LaMarzoccoCloudClient", FakeCloudClient)
     return FakeCloudClient
 
 
@@ -153,7 +157,7 @@ def fake_cloud(monkeypatch: pytest.MonkeyPatch) -> type[FakeCloudClient]:
 def fake_machine(monkeypatch: pytest.MonkeyPatch) -> type[FakeMachine]:
     FakeMachine.instances = []
     FakeMachine.command_results = {"power": True, "steam": True}
-    monkeypatch.setattr(cli, "LaMarzoccoMachine", FakeMachine)
+    monkeypatch.setattr(commands_module, "LaMarzoccoMachine", FakeMachine)
     return FakeMachine
 
 
@@ -170,7 +174,6 @@ def args_for(tmp_path: Path, **overrides: Any) -> argparse.Namespace:
         "serial": None,
         "json": False,
         "data_name": None,
-        "serial_or_state": None,
         "state": None,
         "output": None,
         "installation_id": None,
@@ -253,14 +256,12 @@ def test_login_generates_key_registers_and_saves_selected_machine(
     }
     assert "env-pass" not in config_file.read_text(encoding="utf-8")
     assert fake_keyring[(cli.KEYRING_SERVICE, "env-user")] == "env-pass"
-    assert read_output_json(capsys) == {
-        "config_file": str(config_file.resolve()),
-        "default_serial": "SERIAL-2",
-        "generated_key": True,
-        "key_file": str(key_file.resolve()),
-        "password_saved": True,
-        "username": "env-user",
-    }
+    assert capsys.readouterr().out.splitlines() == [
+        "Logged in as env-user.",
+        "Default machine set to SERIAL-2 - Office - GS3.",
+        f"Generated installation key at {key_file.resolve()}.",
+        "Saved password to the OS keychain.",
+    ]
 
 
 def test_login_save_password_stores_verified_password_after_success(
@@ -289,7 +290,7 @@ def test_login_save_password_stores_verified_password_after_success(
 
     assert fake_keyring[(cli.KEYRING_SERVICE, "explicit-user")] == "explicit-pass"
     assert "explicit-pass" not in config_file.read_text(encoding="utf-8")
-    assert read_output_json(capsys)["password_saved"] is True
+    assert "Saved password to the OS keychain." in capsys.readouterr().out
 
 
 def test_login_no_keyring_skips_default_password_save(
@@ -318,7 +319,7 @@ def test_login_no_keyring_skips_default_password_save(
     )
 
     assert fake_keyring == {}
-    assert read_output_json(capsys)["password_saved"] is False
+    assert "Password not saved." in capsys.readouterr().out
 
 
 def test_login_no_save_password_skips_password_save(
@@ -347,7 +348,7 @@ def test_login_no_save_password_skips_password_save(
     )
 
     assert fake_keyring == {}
-    assert read_output_json(capsys)["password_saved"] is False
+    assert "Password not saved." in capsys.readouterr().out
 
 
 def test_login_loads_existing_key_without_registering(
@@ -380,9 +381,9 @@ def test_login_loads_existing_key_without_registering(
         "default_serial": "SERIAL-1",
         "username": "explicit-user",
     }
-    payload = read_output_json(capsys)
-    assert payload["generated_key"] is False
-    assert payload["password_saved"] is True
+    output = capsys.readouterr().out
+    assert "Generated installation key" not in output
+    assert "Saved password to the OS keychain." in output
     assert fake_keyring[(cli.KEYRING_SERVICE, "explicit-user")] == "explicit-pass"
 
 
@@ -414,10 +415,33 @@ def test_switch_machine_updates_default_serial_only(
         "default_serial": "NEW",
         "other": {"kept": True},
     }
-    assert read_output_json(capsys) == {
-        "config_file": str(config_file.resolve()),
-        "default_serial": "NEW",
-    }
+    assert capsys.readouterr().out == "Default machine set to NEW - New machine.\n"
+
+
+def test_switch_machine_shows_selector_even_for_one_machine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_cloud: type[FakeCloudClient],
+) -> None:
+    key_file = tmp_path / "key.json"
+    config_file = tmp_path / "config.json"
+    write_key(key_file, "switch-key")
+    write_config(config_file, {"username": "saved-user", "default_serial": "OLD"})
+    fake_cloud.things = [FakeThing("ONLY", "Kitchen")]
+    monkeypatch.setenv("LMCTL_PASSWORD", "switch-pass")
+    choose_calls: list[tuple[list[str], str | None, bool]] = []
+
+    def fake_choose_thing(things: list[FakeThing], serial: str | None, *, always_select: bool = False) -> FakeThing:
+        choose_calls.append(([thing.serial_number for thing in things], serial, always_select))
+        return things[0]
+
+    monkeypatch.setattr(commands_module, "choose_thing", fake_choose_thing)
+
+    run(cli.switch_machine(args_for(tmp_path, key_file=key_file, config_file=config_file)))
+
+    assert choose_calls == [(["ONLY"], None, True)]
+    assert capsys.readouterr().out == "Default machine set to ONLY - Kitchen.\n"
 
 
 def test_list_things_json_output(
@@ -487,6 +511,35 @@ def test_show_machine_fetches_and_prints_combined_payload(
     machine = fake_machine.instances[0]
     assert machine.serial_number == "DEFAULT"
     assert machine.calls == ["firmware", "dashboard", "settings", "statistics", "schedule"]
+    output = capsys.readouterr().out
+    assert "serial_number  DEFAULT" in output
+    assert "dashboard\nfield" in output
+    assert "settings\nfield" in output
+    assert "statistics\nfield" in output
+    assert "schedule\nfield" in output
+    assert "firmware\nfield" in output
+    assert "version  1.2.3" in output
+
+
+def test_show_machine_prints_json_when_requested(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fake_cloud: type[FakeCloudClient],
+    fake_machine: type[FakeMachine],
+) -> None:
+    key_file = tmp_path / "key.json"
+    config_file = tmp_path / "config.json"
+    write_key(key_file)
+    write_config(config_file, {"username": "saved-user", "default_serial": "DEFAULT"})
+    monkeypatch.setenv("LMCTL_PASSWORD", "pass")
+
+    run(
+        cli.show_machine(
+            args_for(tmp_path, key_file=key_file, config_file=config_file, json=True)
+        )
+    )
+
     assert read_output_json(capsys) == {
         "serial_number": "DEFAULT",
         "dashboard": {"resource": "dashboard", "serial": "DEFAULT"},
@@ -536,7 +589,11 @@ def test_fetch_machine_data_prints_each_resource(
     )
 
     assert fake_machine.instances[0].calls == expected_calls
-    assert read_output_json(capsys) == expected_payload
+    output = capsys.readouterr().out
+    assert output.startswith(f"{data_name}\n")
+    for key, value in expected_payload.items():
+        assert str(key) in output
+        assert str(value) in output
 
 
 def test_fetch_data_resource_rejects_unknown_resource() -> None:
@@ -559,10 +616,9 @@ def test_register_calls_cloud_client_and_prints_result(
     run(cli.register(args_for(tmp_path, key_file=key_file, config_file=config_file)))
 
     assert fake_cloud.instances[0].register_calls == 1
-    assert read_output_json(capsys) == {
-        "registered": True,
-        "key_file": str(key_file.resolve()),
-    }
+    assert capsys.readouterr().out == (
+        f"Registered installation key {key_file.resolve()}.\n"
+    )
 
 
 def test_generate_key_writes_loadable_key_and_refuses_existing_file(
@@ -575,10 +631,9 @@ def test_generate_key_writes_loadable_key_and_refuses_existing_file(
     )
 
     assert cli.load_installation_key(key_file).installation_id == "generated-id"
-    assert read_output_json(capsys) == {
-        "installation_id": "generated-id",
-        "key_file": str(key_file.resolve()),
-    }
+    assert capsys.readouterr().out == (
+        f"Generated installation key generated-id at {key_file.resolve()}.\n"
+    )
     with pytest.raises(cli.CliError, match="already exists"):
         cli.generate_key(
             args_for(tmp_path, output=key_file, installation_id="second-id", force=False)
@@ -630,18 +685,31 @@ def test_set_power_and_set_steam_print_success_and_map_state(
                 tmp_path,
                 key_file=key_file,
                 config_file=config_file,
-                serial_or_state="on",
-                state=None,
+                state="on",
             )
         )
     )
 
     assert fake_machine.instances[-1].serial_number == "DEFAULT"
     assert fake_machine.instances[-1].calls == [("power", True)]
+    assert capsys.readouterr().out == "Power set to on for DEFAULT.\n"
+
+    run(
+        cli.set_power(
+            args_for(
+                tmp_path,
+                key_file=key_file,
+                config_file=config_file,
+                state="off",
+                json=True,
+            )
+        )
+    )
+
     assert read_output_json(capsys) == {
         "serial": "DEFAULT",
         "command": "power",
-        "state": "on",
+        "state": "off",
         "success": True,
     }
 
@@ -651,7 +719,7 @@ def test_set_power_and_set_steam_print_success_and_map_state(
                 tmp_path,
                 key_file=key_file,
                 config_file=config_file,
-                serial_or_state="EXPLICIT",
+                serial="EXPLICIT",
                 state="off",
             )
         )
@@ -659,12 +727,7 @@ def test_set_power_and_set_steam_print_success_and_map_state(
 
     assert fake_machine.instances[-1].serial_number == "EXPLICIT"
     assert fake_machine.instances[-1].calls == [("steam", False)]
-    assert read_output_json(capsys) == {
-        "serial": "EXPLICIT",
-        "command": "steam",
-        "state": "off",
-        "success": True,
-    }
+    assert capsys.readouterr().out == "Steam set to off for EXPLICIT.\n"
 
 
 def test_run_machine_command_prints_failure_then_raises(
@@ -694,12 +757,7 @@ def test_run_machine_command_prints_failure_then_raises(
         )
 
     assert fake_machine.instances[-1].calls == [("power", False)]
-    assert read_output_json(capsys) == {
-        "serial": "SERIAL",
-        "command": "power",
-        "state": "off",
-        "success": False,
-    }
+    assert capsys.readouterr().out == ""
 
 
 def test_cloud_client_resolves_credentials_key_and_closes_session(
@@ -764,29 +822,26 @@ def test_password_commands_manage_keychain(
     cli.save_password(args_for(tmp_path, config_file=config_file))
 
     assert fake_keyring[(cli.KEYRING_SERVICE, "config-user")] == "env-pass"
-    assert read_output_json(capsys) == {
-        "service": cli.KEYRING_SERVICE,
-        "username": "config-user",
-        "password_saved": True,
-    }
+    assert capsys.readouterr().out == (
+        f"Saved password for config-user in keychain service {cli.KEYRING_SERVICE}.\n"
+    )
 
     cli.password_status(args_for(tmp_path, config_file=config_file))
-    assert read_output_json(capsys) == {
-        "service": cli.KEYRING_SERVICE,
-        "username": "config-user",
-        "password_saved": True,
-    }
+    assert capsys.readouterr().out == (
+        f"Password saved for config-user in keychain service {cli.KEYRING_SERVICE}.\n"
+    )
 
     cli.forget_password(args_for(tmp_path, config_file=config_file))
     assert (cli.KEYRING_SERVICE, "config-user") not in fake_keyring
-    assert read_output_json(capsys) == {
-        "service": cli.KEYRING_SERVICE,
-        "username": "config-user",
-        "password_deleted": True,
-    }
+    assert capsys.readouterr().out == (
+        f"Deleted saved password for config-user from keychain service "
+        f"{cli.KEYRING_SERVICE}.\n"
+    )
 
     cli.forget_password(args_for(tmp_path, config_file=config_file))
-    assert read_output_json(capsys)["password_deleted"] is False
+    assert capsys.readouterr().out == (
+        f"No saved password for config-user in keychain service {cli.KEYRING_SERVICE}.\n"
+    )
 
 
 @pytest.mark.parametrize(

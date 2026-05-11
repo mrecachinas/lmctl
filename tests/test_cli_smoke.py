@@ -1,7 +1,5 @@
 """Smoke coverage for the lmctl CLI test harness."""
 
-import json
-
 import pytest
 
 from lmctl import cli
@@ -30,12 +28,9 @@ def test_config_commands_round_trip(
         )
         == 0
     )
-    set_payload = json.loads(capsys.readouterr().out)
-
-    assert set_payload == {
-        "config_file": str(cli_paths.config_file.resolve()),
-        "default_serial": "GS3-001",
-    }
+    assert capsys.readouterr().out == (
+        f"Default serial set to GS3-001 in {cli_paths.config_file.resolve()}.\n"
+    )
 
     assert (
         cli.main(
@@ -48,10 +43,6 @@ def test_config_commands_round_trip(
         )
         == 0
     )
-    show_payload = json.loads(capsys.readouterr().out)
-
-    assert show_payload == {
-        "config_file": str(cli_paths.config_file.resolve()),
-        "default_serial": "GS3-001",
-        "username": None,
-    }
+    output = capsys.readouterr().out
+    assert f"config_file     {cli_paths.config_file.resolve()}" in output
+    assert "default_serial  GS3-001" in output

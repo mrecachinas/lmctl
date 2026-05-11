@@ -25,10 +25,13 @@ lmctl show
 lmctl dashboard
 lmctl power on
 lmctl steam off
+lmctl show --json            # machine-readable output
 ```
 
-Use `--serial SERIAL` with `login`/`switch`, or pass `SERIAL` to machine
-commands, to avoid the configured default.
+Use `--serial SERIAL` with `login`, `switch`, `power`, or `steam`; pass
+`SERIAL` to read-only machine commands to avoid the configured default.
+
+Output defaults to text/tables. Use `--json` before or after a command for JSON.
 
 ## Config
 
@@ -53,7 +56,7 @@ remove the saved password. `lmctl login` saves by default; use
 ## Help
 
 ```text
-usage: lmctl [-h] [--username USERNAME] [--password PASSWORD] [--no-keyring] [--key-file KEY_FILE]
+usage: lmctl [-h] [--json] [--username USERNAME] [--password PASSWORD] [--no-keyring] [--key-file KEY_FILE]
              [--config-file CONFIG_FILE]
              {login,switch,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam}
              ...
@@ -80,6 +83,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  --json                Print JSON instead of human-readable output.
   --username USERNAME   La Marzocco Home username. Defaults to LMCTL_USERNAME or LAMARZOCCO_USERNAME, then saved config.
   --password PASSWORD   La Marzocco Home password. Defaults to LMCTL_PASSWORD, LAMARZOCCO_PASSWORD, saved keychain password, or an interactive prompt.
   --no-keyring          Do not read from or write to the OS keychain for this invocation.

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from lmctl import _credentials as credentials
 from lmctl import cli
 
 
@@ -186,16 +187,16 @@ def parser(monkeypatch, tmp_path):
             ["power", "on"],
             {
                 "command": "power",
-                "serial_or_state": "on",
-                "state": None,
+                "serial": None,
+                "state": "on",
                 "func": cli.set_power,
             },
         ),
         (
-            ["power", "GS3-001", "off"],
+            ["power", "--serial", "GS3-001", "off"],
             {
                 "command": "power",
-                "serial_or_state": "GS3-001",
+                "serial": "GS3-001",
                 "state": "off",
                 "func": cli.set_power,
             },
@@ -204,16 +205,16 @@ def parser(monkeypatch, tmp_path):
             ["steam", "off"],
             {
                 "command": "steam",
-                "serial_or_state": "off",
-                "state": None,
+                "serial": None,
+                "state": "off",
                 "func": cli.set_steam,
             },
         ),
         (
-            ["steam", "GS3-001", "on"],
+            ["steam", "--serial", "GS3-001", "on"],
             {
                 "command": "steam",
-                "serial_or_state": "GS3-001",
+                "serial": "GS3-001",
                 "state": "on",
                 "func": cli.set_steam,
             },
@@ -243,15 +244,64 @@ def test_build_parser_global_options_and_defaults(parser, tmp_path):
     assert args.username == "user"
     assert args.password == "pass"
     assert args.no_keyring is True
+    assert args.json is True
     assert args.key_file == tmp_path / "installation_key.json"
     assert args.config_file == tmp_path / "config.json"
 
 
+def test_build_parser_global_json_is_not_overwritten(parser):
+    args = parser.parse_args(["--json", "things"])
+
+    assert args.json is True
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["login", "--json"],
+        ["switch", "--json"],
+        ["password", "save", "--json"],
+        ["password", "status", "--json"],
+        ["password", "forget", "--json"],
+        ["config", "show", "--json"],
+        ["config", "set-serial", "GS3-001", "--json"],
+        ["config", "clear-serial", "--json"],
+        ["key", "generate", "--json"],
+        ["register", "--json"],
+        ["things", "--json"],
+        ["show", "--json"],
+        ["dashboard", "--json"],
+        ["settings", "--json"],
+        ["statistics", "--json"],
+        ["schedule", "--json"],
+        ["firmware", "--json"],
+        ["power", "on", "--json"],
+        ["steam", "off", "--json"],
+    ],
+)
+def test_leaf_commands_accept_json(parser, argv):
+    args = parser.parse_args(argv)
+
+    assert args.json is True
+
+
 def test_build_parser_rejects_invalid_state(parser):
     with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["power", "GS3-001", "maybe"])
+        parser.parse_args(["power", "maybe"])
 
     assert exc_info.value.code == 2
+
+
+def test_power_help_uses_clear_state_and_serial_names(parser, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["power", "-h"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "serial_or_state" not in output
+    assert "--serial SERIAL" in output
+    assert "{on,off}" in output
+    assert "Desired state." in output
 
 
 def test_load_config_returns_empty_for_missing_file(tmp_path):
@@ -306,6 +356,22 @@ def test_show_config_outputs_selected_fields(tmp_path, capsys):
 
     cli.show_config(argparse.Namespace(config_file=config_file))
 
+    output = capsys.readouterr().out
+    assert "field           value" in output
+    assert f"config_file     {config_file.resolve()}" in output
+    assert "username        user" in output
+    assert "default_serial  GS3-001" in output
+
+
+def test_show_config_outputs_json_when_requested(tmp_path, capsys):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"username": "user", "default_serial": "GS3-001", "x": "ignored"}),
+        encoding="utf-8",
+    )
+
+    cli.show_config(argparse.Namespace(config_file=config_file, json=True))
+
     assert output_json(capsys) == {
         "config_file": str(config_file.resolve()),
         "username": "user",
@@ -325,10 +391,9 @@ def test_set_default_serial_saves_config_and_outputs_path(tmp_path, capsys):
         "default_serial": "GS3-001",
         "username": "user",
     }
-    assert output_json(capsys) == {
-        "config_file": str(config_file.resolve()),
-        "default_serial": "GS3-001",
-    }
+    assert capsys.readouterr().out == (
+        f"Default serial set to GS3-001 in {config_file.resolve()}.\n"
+    )
 
 
 def test_clear_default_serial_removes_only_default_serial(tmp_path, capsys):
@@ -341,10 +406,9 @@ def test_clear_default_serial_removes_only_default_serial(tmp_path, capsys):
     cli.clear_default_serial(argparse.Namespace(config_file=config_file))
 
     assert json.loads(config_file.read_text(encoding="utf-8")) == {"username": "user"}
-    assert output_json(capsys) == {
-        "config_file": str(config_file.resolve()),
-        "default_serial": None,
-    }
+    assert capsys.readouterr().out == (
+        f"Default serial cleared in {config_file.resolve()}.\n"
+    )
 
 
 def test_resolve_serial_prefers_explicit_serial(tmp_path):
@@ -397,8 +461,8 @@ def test_resolve_serial_rejects_invalid_default_serial(tmp_path, configured_seri
     [
         (["power", "on"], ("GS3-001", "on")),
         (["steam", "off"], ("GS3-001", "off")),
-        (["power", "GS3-002", "off"], ("GS3-002", "off")),
-        (["steam", "GS3-002", "on"], ("GS3-002", "on")),
+        (["power", "--serial", "GS3-002", "off"], ("GS3-002", "off")),
+        (["steam", "--serial", "GS3-002", "on"], ("GS3-002", "on")),
     ],
 )
 def test_resolve_stateful_command_default_and_explicit_serials(
@@ -412,15 +476,16 @@ def test_resolve_stateful_command_default_and_explicit_serials(
     assert cli.resolve_stateful_command(args) == expected
 
 
-def test_resolve_stateful_command_requires_state_for_explicit_serial(tmp_path):
-    with pytest.raises(cli.CliError, match="missing state"):
+def test_resolve_stateful_command_prefers_explicit_serial(tmp_path):
+    bad_config = tmp_path / "config.json"
+    bad_config.write_text("{not json", encoding="utf-8")
+
+    assert (
         cli.resolve_stateful_command(
-            argparse.Namespace(
-                serial_or_state="GS3-001",
-                state=None,
-                config_file=tmp_path / "config.json",
-            )
+            argparse.Namespace(serial="GS3-001", state="off", config_file=bad_config)
         )
+        == ("GS3-001", "off")
+    )
 
 
 def test_credential_prefers_explicit_value(monkeypatch, tmp_path):
@@ -583,7 +648,7 @@ def test_password_credential_uses_saved_password(monkeypatch):
     monkeypatch.delenv("LMCTL_PASSWORD", raising=False)
     monkeypatch.delenv("LAMARZOCCO_PASSWORD", raising=False)
     monkeypatch.setattr(
-        cli,
+        credentials,
         "get_saved_password",
         lambda username, args: "saved-pass"
         if username == "user@example.com"
@@ -603,7 +668,7 @@ def test_password_credential_can_skip_saved_password(monkeypatch):
         lambda prompt: "typed-password",
     )
     monkeypatch.setattr(
-        cli,
+        credentials,
         "get_saved_password",
         lambda username, args: "saved-pass",
     )
@@ -622,7 +687,7 @@ def test_password_credential_reports_missing_value(monkeypatch):
     monkeypatch.delenv("LMCTL_PASSWORD", raising=False)
     monkeypatch.delenv("LAMARZOCCO_PASSWORD", raising=False)
     monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: False))
-    monkeypatch.setattr(cli, "get_saved_password", lambda username, args: None)
+    monkeypatch.setattr(credentials, "get_saved_password", lambda username, args: None)
 
     with pytest.raises(cli.CliError, match="missing password"):
         cli.password_credential(password_args(), "user@example.com")
@@ -707,6 +772,21 @@ def test_print_table_formats_display_values(capsys):
     ]
 
 
+def test_print_key_values_flattens_nested_values(capsys):
+    cli.print_key_values(
+        {
+            "serial": "GS3-001",
+            "nested": {"enabled": True},
+            "items": [{"name": "weekday"}],
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "serial          GS3-001" in output
+    assert "nested.enabled  True" in output
+    assert "items[0].name   weekday" in output
+
+
 def test_display_value_formats_none_value_objects_and_plain_values():
     assert cli.display_value(None) == ""
     assert cli.display_value(Value("ready")) == "ready"
@@ -718,11 +798,7 @@ def test_main_returns_zero_for_successful_config_show(tmp_path, capsys):
     config_file.write_text(json.dumps({"default_serial": "GS3-001"}), encoding="utf-8")
 
     assert cli.main(["--config-file", str(config_file), "config", "show"]) == 0
-    assert output_json(capsys) == {
-        "config_file": str(config_file.resolve()),
-        "username": None,
-        "default_serial": "GS3-001",
-    }
+    assert "default_serial  GS3-001" in capsys.readouterr().out
 
 
 def test_main_reports_user_correctable_errors(tmp_path, capsys):
