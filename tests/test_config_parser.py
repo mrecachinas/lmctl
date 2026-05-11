@@ -62,6 +62,24 @@ def parser(monkeypatch, tmp_path):
             },
         ),
         (
+            ["mcp"],
+            {
+                "command": "mcp",
+                "url": "stdio",
+                "allow_remote": False,
+                "func": cli.run_mcp_server,
+            },
+        ),
+        (
+            ["mcp", "--allow-remote", "http://0.0.0.0:8000/mcp"],
+            {
+                "command": "mcp",
+                "url": "http://0.0.0.0:8000/mcp",
+                "allow_remote": True,
+                "func": cli.run_mcp_server,
+            },
+        ),
+        (
             ["password", "save"],
             {
                 "command": "password",
@@ -290,6 +308,14 @@ def test_build_parser_rejects_invalid_state(parser):
         parser.parse_args(["power", "maybe"])
 
     assert exc_info.value.code == 2
+
+
+def test_main_rejects_missing_command_when_not_running_mcp(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main([])
+
+    assert exc_info.value.code == 2
+    assert "the following arguments are required: command" in capsys.readouterr().err
 
 
 def test_power_help_uses_clear_state_and_serial_names(parser, capsys):

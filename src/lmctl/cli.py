@@ -61,6 +61,13 @@ from ._credentials import (
 )
 from ._errors import CliError
 from ._keys import ensure_installation_key, load_installation_key
+from ._mcp import (
+    McpServerConfig,
+    create_mcp_server,
+    is_loopback_host,
+    parse_mcp_url,
+    run_mcp_server,
+)
 from ._output import (
     display_value,
     flatten_key_values,
@@ -108,6 +115,7 @@ __all__ = [
     "KEYRING_SERVICE",
     "KeyringError",
     "MachineDataResource",
+    "McpServerConfig",
     "PASSWORD_ENV_VARS",
     "USERNAME_ENV_VARS",
     "USERNAME_KEY",
@@ -120,6 +128,7 @@ __all__ = [
     "clear_default_serial",
     "cloud_client",
     "credential",
+    "create_mcp_server",
     "default_config_file",
     "default_key_file",
     "delete_saved_password",
@@ -135,6 +144,7 @@ __all__ = [
     "get_saved_password",
     "getpass",
     "json_text",
+    "is_loopback_host",
     "keyring",
     "keyring_disabled",
     "list_things",
@@ -144,6 +154,7 @@ __all__ = [
     "main",
     "password_credential",
     "password_status",
+    "parse_mcp_url",
     "print_json",
     "print_key_values",
     "print_machine_sections",
@@ -154,6 +165,7 @@ __all__ = [
     "resolve_serial",
     "resolve_stateful_command",
     "run_machine_command",
+    "run_mcp_server",
     "save_config",
     "save_password",
     "select_option",

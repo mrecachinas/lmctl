@@ -26,6 +26,7 @@ lmctl dashboard
 lmctl power on
 lmctl steam off
 lmctl show --json            # machine-readable output
+lmctl mcp                    # MCP stdio server for agents
 ```
 
 Use `--serial SERIAL` with `login`, `switch`, `power`, or `steam`; pass
@@ -53,20 +54,45 @@ username. Use `lmctl password status` or `lmctl password forget` to inspect or
 remove the saved password. `lmctl login` saves by default; use
 `lmctl login --no-save-password` or `--no-keyring` to opt out.
 
+## MCP
+
+After `lmctl login`, agents can use stdio:
+
+```json
+{
+  "mcpServers": {
+    "lmctl": {
+      "command": "lmctl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Or run a local Streamable HTTP server:
+
+```bash
+lmctl mcp http://127.0.0.1:8000/mcp
+```
+
+HTTP binds loopback only by default. `--allow-remote` exposes physical
+machine control and should only be used behind your own auth/TLS.
+
 ## Help
 
 ```text
 usage: lmctl [-h] [--json] [--username USERNAME] [--password PASSWORD] [--no-keyring] [--key-file KEY_FILE]
              [--config-file CONFIG_FILE]
-             {login,switch,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam}
+             {login,switch,mcp,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam}
              ...
 
 Control La Marzocco Home machines using pylamarzocco.
 
 positional arguments:
-  {login,switch,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam}
+  {login,switch,mcp,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam}
     login               Authenticate, choose a machine, and save defaults.
     switch              Choose a different default machine.
+    mcp                 Run an MCP server for agent integrations.
     password            Manage the saved keychain password.
     config              Manage lmctl defaults.
     key                 Manage installation keys.

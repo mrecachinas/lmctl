@@ -27,6 +27,7 @@ class cloud_client:
             "username",
             config_file=self._args.config_file,
             config_key=USERNAME_KEY,
+            no_prompt=getattr(self._args, "no_prompt", False),
         )
         return LaMarzoccoCloudClient(
             username=username,

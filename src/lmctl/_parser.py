@@ -24,6 +24,7 @@ from ._commands import (
 )
 from ._config import default_config_file, default_key_file
 from ._constants import APP_NAME
+from ._mcp import run_mcp_server
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,6 +111,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Select this machine serial instead of prompting.",
     )
     switch_parser.set_defaults(func=switch_machine)
+
+    mcp_parser = subcommands.add_parser(
+        "mcp",
+        help="Run an MCP server for agent integrations.",
+    )
+    mcp_parser.add_argument(
+        "url",
+        nargs="?",
+        default="stdio",
+        help=(
+            "MCP endpoint. Defaults to stdio; use an http:// URL to serve "
+            "Streamable HTTP."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help=(
+            "Allow MCP HTTP mode to bind non-loopback hosts. This exposes physical "
+            "machine control."
+        ),
+    )
+    mcp_parser.set_defaults(func=run_mcp_server)
 
     password_parser = subcommands.add_parser(
         "password", help="Manage the saved keychain password."

@@ -24,6 +24,7 @@ def credential(
     prompt_secret: bool = False,
     config_file: Path | None = None,
     config_key: str | None = None,
+    no_prompt: bool = False,
 ) -> str:
     """Resolve a credential from args, environment, or an interactive prompt."""
     if explicit_value:
@@ -42,7 +43,7 @@ def credential(
         if configured_value is not None:
             raise CliError(f"{expand_path(config_file)} has an invalid {config_key}")
 
-    if sys.stdin.isatty():
+    if not no_prompt and sys.stdin.isatty():
         if prompt_secret:
             value = getpass.getpass(f"La Marzocco {label}: ")
         else:
@@ -74,7 +75,7 @@ def password_credential(
         if saved_password is not None:
             return saved_password
 
-    if sys.stdin.isatty():
+    if not getattr(args, "no_prompt", False) and sys.stdin.isatty():
         value = getpass.getpass("La Marzocco password: ")
         if value:
             return value
