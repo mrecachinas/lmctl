@@ -14,26 +14,6 @@ lmctl login
 If `lmctl` is not on your `PATH`, run `uv tool update-shell` and restart your
 shell.
 
-## Common commands
-
-```bash
-lmctl login                  # authenticate, save password, choose default machine
-lmctl password save          # save/update password later
-lmctl switch                 # arrow-key picker for a different default machine
-lmctl things
-lmctl show
-lmctl dashboard
-lmctl power on
-lmctl steam off
-lmctl show --json            # machine-readable output
-lmctl mcp                    # MCP stdio server for agents
-```
-
-Use `--serial SERIAL` with `login`, `switch`, `power`, or `steam`; pass
-`SERIAL` to read-only machine commands to avoid the configured default.
-
-Output defaults to text/tables. Use `--json` before or after a command for JSON.
-
 ## Config
 
 Default config: `~/.config/lmctl/config.json`
