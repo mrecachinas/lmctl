@@ -237,6 +237,55 @@ def parser(monkeypatch, tmp_path):
                 "func": cli.set_steam,
             },
         ),
+        (
+            [
+                "water",
+                "refill",
+                "GS3-001",
+                "--state-file",
+                "water.json",
+                "--tank-ml",
+                "1800",
+                "--reserve-ml",
+                "200",
+                "--shot-ml",
+                "50",
+                "--flush-ml",
+                "20",
+            ],
+            {
+                "command": "water",
+                "water_command": "refill",
+                "serial": "GS3-001",
+                "state_file": Path("water.json"),
+                "tank_ml": 1800.0,
+                "reserve_ml": 200.0,
+                "shot_ml": 50.0,
+                "flush_ml": 20.0,
+                "func": cli.refill_water,
+            },
+        ),
+        (
+            ["water", "estimate", "--extra-ml", "25"],
+            {
+                "command": "water",
+                "water_command": "estimate",
+                "serial": None,
+                "extra_ml": 25.0,
+                "func": cli.estimate_water,
+            },
+        ),
+        (
+            ["water", "log-use", "--serial", "GS3-001", "75", "--note", "steam"],
+            {
+                "command": "water",
+                "water_command": "log-use",
+                "serial": "GS3-001",
+                "amount_ml": 75.0,
+                "note": "steam",
+                "func": cli.log_water_use,
+            },
+        ),
     ],
 )
 def test_build_parser_command_shapes(parser, argv, expected):
@@ -295,6 +344,9 @@ def test_build_parser_global_json_is_not_overwritten(parser):
         ["firmware", "--json"],
         ["power", "on", "--json"],
         ["steam", "off", "--json"],
+        ["water", "refill", "--json"],
+        ["water", "estimate", "--json"],
+        ["water", "log-use", "75", "--json"],
     ],
 )
 def test_leaf_commands_accept_json(parser, argv):

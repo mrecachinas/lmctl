@@ -25,6 +25,7 @@ from ._commands import (
 from ._config import default_config_file, default_key_file
 from ._constants import APP_NAME
 from ._mcp import run_mcp_server
+from ._water import estimate_water, log_water_use, refill_water
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -262,6 +263,62 @@ def build_parser() -> argparse.ArgumentParser:
     add_stateful_command_arguments(steam_parser)
     steam_parser.set_defaults(func=set_steam)
 
+    water_parser = subcommands.add_parser(
+        "water",
+        help="EXPERIMENTAL: estimate reservoir water from counters.",
+    )
+    water_subcommands = water_parser.add_subparsers(
+        dest="water_command",
+        required=True,
+    )
+
+    water_refill_parser = water_subcommands.add_parser(
+        "refill",
+        help="EXPERIMENTAL: mark the tank as full and reset the estimate baseline.",
+        parents=[json_parent],
+    )
+    add_serial_argument(water_refill_parser)
+    add_water_state_argument(water_refill_parser)
+    add_water_calibration_arguments(water_refill_parser)
+    water_refill_parser.set_defaults(func=refill_water)
+
+    water_estimate_parser = water_subcommands.add_parser(
+        "estimate",
+        help="EXPERIMENTAL: estimate remaining reservoir water.",
+        parents=[json_parent],
+    )
+    add_serial_argument(water_estimate_parser)
+    add_water_state_argument(water_estimate_parser)
+    add_water_calibration_arguments(water_estimate_parser)
+    water_estimate_parser.add_argument(
+        "--extra-ml",
+        type=float,
+        default=0.0,
+        help="One-off untracked water use to subtract for this estimate.",
+    )
+    water_estimate_parser.set_defaults(func=estimate_water)
+
+    water_log_parser = water_subcommands.add_parser(
+        "log-use",
+        help="EXPERIMENTAL: log untracked water use such as steaming.",
+        parents=[json_parent],
+    )
+    water_log_parser.add_argument(
+        "--serial",
+        help="Machine serial number. Defaults to the configured default machine.",
+    )
+    add_water_state_argument(water_log_parser)
+    water_log_parser.add_argument(
+        "amount_ml",
+        type=float,
+        help="Milliliters of untracked water to subtract from future estimates.",
+    )
+    water_log_parser.add_argument(
+        "--note",
+        help="Optional note for the last logged manual water use.",
+    )
+    water_log_parser.set_defaults(func=log_water_use)
+
     return parser
 
 
@@ -294,4 +351,40 @@ def add_stateful_command_arguments(parser: argparse.ArgumentParser) -> None:
         "state",
         choices=("on", "off"),
         help="Desired state.",
+    )
+
+
+def add_water_state_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the water estimator state-file argument."""
+    parser.add_argument(
+        "--state-file",
+        type=Path,
+        help=(
+            "Water estimator state file. Defaults to water.json next to the lmctl "
+            "config file."
+        ),
+    )
+
+
+def add_water_calibration_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add experimental water estimator calibration arguments."""
+    parser.add_argument(
+        "--tank-ml",
+        type=float,
+        help="Tank capacity in milliliters. Defaults to 2000 for Linea Micra.",
+    )
+    parser.add_argument(
+        "--reserve-ml",
+        type=float,
+        help="Low-water reserve threshold in milliliters. Defaults to 250.",
+    )
+    parser.add_argument(
+        "--shot-ml",
+        type=float,
+        help="Estimated water used per coffee counter increment. Defaults to 45.",
+    )
+    parser.add_argument(
+        "--flush-ml",
+        type=float,
+        help="Estimated water used per flush counter increment. Defaults to 30.",
     )

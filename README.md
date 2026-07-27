@@ -63,13 +63,13 @@ machine control and should only be used behind your own auth/TLS.
 ```text
 usage: lmctl [-h] [--json] [--username USERNAME] [--password PASSWORD] [--no-keyring] [--key-file KEY_FILE]
              [--config-file CONFIG_FILE]
-             {login,switch,mcp,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam}
+             {login,switch,mcp,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam,water}
              ...
 
 Control La Marzocco Home machines using pylamarzocco.
 
 positional arguments:
-  {login,switch,mcp,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam}
+  {login,switch,mcp,password,config,key,register,things,show,dashboard,settings,statistics,schedule,firmware,power,steam,water}
     login               Authenticate, choose a machine, and save defaults.
     switch              Choose a different default machine.
     mcp                 Run an MCP server for agent integrations.
@@ -86,6 +86,7 @@ positional arguments:
     firmware            Fetch firmware information.
     power               Turn a machine on or off.
     steam               Turn steam on or off.
+    water               EXPERIMENTAL: estimate reservoir water from counters.
 
 options:
   -h, --help            show this help message and exit
@@ -97,6 +98,39 @@ options:
   --config-file CONFIG_FILE
                         Configuration JSON file. Defaults to LMCTL_CONFIG_FILE or ~/.config/lmctl/config.json.
 ```
+
+## Experimental water estimate
+
+`lmctl water` is **experimental**. La Marzocco exposes the Micra's low-water
+alarm, coffee count, and flush count, but not a continuous reservoir sensor.
+The estimate is useful for rough "full / half / low soon" guidance, not exact
+milliliters.
+
+After filling the tank, reset the baseline:
+
+```bash
+lmctl water refill
+```
+
+Then estimate remaining water:
+
+```bash
+lmctl water estimate
+```
+
+Steam and manual water use are not exposed by the machine API. Log those
+separately when you want them reflected in future estimates:
+
+```bash
+lmctl water log-use 75 --note steam
+```
+
+Calibration flags are available on `refill` and `estimate`: `--tank-ml`,
+`--reserve-ml`, `--shot-ml`, and `--flush-ml`. The estimator stores per-machine
+state in `water.json` next to your lmctl config by default.
+
+The MCP server also exposes the experimental water estimator as
+`get_water_estimate`, `mark_water_refill`, and `log_water_use`.
 
 ## Development
 

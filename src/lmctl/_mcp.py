@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from ipaddress import ip_address
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -22,6 +23,7 @@ from ._config import resolve_serial
 from ._constants import APP_NAME
 from ._errors import CliError
 from ._output import to_jsonable
+from . import _water
 
 MCP_DEFAULT_HOST = "127.0.0.1"
 MCP_DEFAULT_PORT = 8000
@@ -204,6 +206,87 @@ def create_mcp_server(
             lambda: set_machine_state(args, "steam", state, serial)
         )
 
+    @server.tool(
+        name="get_water_estimate",
+        description=(
+            "EXPERIMENTAL: estimate remaining reservoir water from coffee and flush "
+            "counters. This is not a continuous tank sensor reading. Omit serial to "
+            "use the configured default."
+        ),
+    )
+    async def get_water_estimate(
+        serial: str | None = None,
+        extra_ml: float = 0.0,
+        tank_ml: float | None = None,
+        reserve_ml: float | None = None,
+        shot_ml: float | None = None,
+        flush_ml: float | None = None,
+        state_file: str | None = None,
+    ) -> dict[str, Any]:
+        return await call_mcp_tool(
+            lambda: get_water_estimate_payload(
+                args,
+                serial=serial,
+                extra_ml=extra_ml,
+                tank_ml=tank_ml,
+                reserve_ml=reserve_ml,
+                shot_ml=shot_ml,
+                flush_ml=flush_ml,
+                state_file=state_file,
+            )
+        )
+
+    @server.tool(
+        name="mark_water_refill",
+        description=(
+            "EXPERIMENTAL: mark the reservoir as full and reset the water-estimate "
+            "baseline. This writes local lmctl water state. Omit serial to use the "
+            "configured default."
+        ),
+    )
+    async def mark_water_refill(
+        serial: str | None = None,
+        tank_ml: float | None = None,
+        reserve_ml: float | None = None,
+        shot_ml: float | None = None,
+        flush_ml: float | None = None,
+        state_file: str | None = None,
+    ) -> dict[str, Any]:
+        return await call_mcp_tool(
+            lambda: mark_water_refill_payload(
+                args,
+                serial=serial,
+                tank_ml=tank_ml,
+                reserve_ml=reserve_ml,
+                shot_ml=shot_ml,
+                flush_ml=flush_ml,
+                state_file=state_file,
+            )
+        )
+
+    @server.tool(
+        name="log_water_use",
+        description=(
+            "EXPERIMENTAL: log untracked reservoir water use, such as steaming, so "
+            "future estimates subtract it. Omit serial to use the configured default."
+        ),
+    )
+    async def log_water_use(
+        amount_ml: float,
+        note: str | None = None,
+        serial: str | None = None,
+        state_file: str | None = None,
+    ) -> dict[str, Any]:
+        return await call_mcp_tool(
+            lambda: log_water_use_payload(
+                args,
+                amount_ml=amount_ml,
+                note=note,
+                serial=serial,
+                state_file=state_file,
+            )
+        )
+
     return server
 
 
@@ -250,6 +333,33 @@ def tool_args(
         no_keyring=base_args.no_keyring,
         no_prompt=True,
     )
+
+
+def water_tool_args(
+    base_args: argparse.Namespace,
+    *,
+    serial: str | None = None,
+    state_file: str | None = None,
+    tank_ml: float | None = None,
+    reserve_ml: float | None = None,
+    shot_ml: float | None = None,
+    flush_ml: float | None = None,
+    extra_ml: float = 0.0,
+    amount_ml: float | None = None,
+    note: str | None = None,
+) -> argparse.Namespace:
+    """Build args for experimental water estimator MCP tool calls."""
+    args = tool_args(base_args, serial)
+    args.json = True
+    args.state_file = Path(state_file).expanduser() if state_file else None
+    args.tank_ml = tank_ml
+    args.reserve_ml = reserve_ml
+    args.shot_ml = shot_ml
+    args.flush_ml = flush_ml
+    args.extra_ml = extra_ml
+    args.amount_ml = amount_ml
+    args.note = note
+    return args
 
 
 async def list_machines_payload(base_args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -324,18 +434,89 @@ async def set_machine_state(
     }
 
 
+async def get_water_estimate_payload(
+    base_args: argparse.Namespace,
+    *,
+    serial: str | None,
+    extra_ml: float,
+    tank_ml: float | None,
+    reserve_ml: float | None,
+    shot_ml: float | None,
+    flush_ml: float | None,
+    state_file: str | None,
+) -> dict[str, Any]:
+    """Return an experimental reservoir water estimate."""
+    args = water_tool_args(
+        base_args,
+        serial=serial,
+        extra_ml=extra_ml,
+        tank_ml=tank_ml,
+        reserve_ml=reserve_ml,
+        shot_ml=shot_ml,
+        flush_ml=flush_ml,
+        state_file=state_file,
+    )
+    return await _water.water_estimate_payload(args)
+
+
+async def mark_water_refill_payload(
+    base_args: argparse.Namespace,
+    *,
+    serial: str | None,
+    tank_ml: float | None,
+    reserve_ml: float | None,
+    shot_ml: float | None,
+    flush_ml: float | None,
+    state_file: str | None,
+) -> dict[str, Any]:
+    """Mark the reservoir as full for experimental water estimates."""
+    args = water_tool_args(
+        base_args,
+        serial=serial,
+        tank_ml=tank_ml,
+        reserve_ml=reserve_ml,
+        shot_ml=shot_ml,
+        flush_ml=flush_ml,
+        state_file=state_file,
+    )
+    return await _water.refill_water_payload(args)
+
+
+async def log_water_use_payload(
+    base_args: argparse.Namespace,
+    *,
+    amount_ml: float,
+    note: str | None,
+    serial: str | None,
+    state_file: str | None,
+) -> dict[str, Any]:
+    """Log untracked water usage for experimental water estimates."""
+    args = water_tool_args(
+        base_args,
+        serial=serial,
+        amount_ml=amount_ml,
+        note=note,
+        state_file=state_file,
+    )
+    return _water.log_water_use_payload(args)
+
+
 __all__ = [
     "MCP_DEFAULT_HOST",
     "MCP_DEFAULT_PATH",
     "MCP_DEFAULT_PORT",
     "McpServerConfig",
     "create_mcp_server",
+    "get_water_estimate_payload",
     "is_loopback_host",
     "list_machines_payload",
+    "log_water_use_payload",
     "machine_data_payload",
     "machine_payload",
+    "mark_water_refill_payload",
     "parse_mcp_url",
     "run_mcp_server",
     "set_machine_state",
     "tool_args",
+    "water_tool_args",
 ]

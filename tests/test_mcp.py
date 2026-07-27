@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from pylamarzocco.util import generate_installation_key
 
 from lmctl import _client as client_module
 from lmctl import _mcp
+from lmctl import _water
 from lmctl import cli
 
 
@@ -61,6 +63,9 @@ class FakeCloudClient:
 
 
 class FakeMachine:
+    total_coffee = 100
+    total_flush = 10
+
     def __init__(
         self, serial_number: str, cloud_client: FakeCloudClient | object
     ) -> None:
@@ -82,6 +87,12 @@ class FakeMachine:
 
     async def get_statistics(self) -> None:
         self.statistics = {"resource": "statistics", "serial": self.serial_number}
+
+    async def get_coffee_and_flush_counter(self) -> dict[str, int]:
+        return {
+            "total_coffee": self.total_coffee,
+            "total_flush": self.total_flush,
+        }
 
     async def get_schedule(self) -> None:
         self.schedule = {"resource": "schedule", "serial": self.serial_number}
@@ -141,9 +152,12 @@ def mcp_args(
 @pytest.fixture(autouse=True)
 def fake_clients(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeSession.instances = []
+    FakeMachine.total_coffee = 100
+    FakeMachine.total_flush = 10
     monkeypatch.setattr(client_module, "ClientSession", FakeSession)
     monkeypatch.setattr(client_module, "LaMarzoccoCloudClient", FakeCloudClient)
     monkeypatch.setattr(_mcp, "LaMarzoccoMachine", FakeMachine)
+    monkeypatch.setattr(_water, "LaMarzoccoMachine", FakeMachine)
 
 
 @pytest.mark.parametrize(
@@ -214,7 +228,10 @@ def test_create_mcp_server_registers_expected_tools(
         "get_schedule",
         "get_settings",
         "get_statistics",
+        "get_water_estimate",
         "list_machines",
+        "log_water_use",
+        "mark_water_refill",
         "set_power",
         "set_steam",
     }
@@ -242,6 +259,70 @@ def test_mcp_state_tool_can_override_serial(mcp_args: argparse.Namespace) -> Non
     }
 
 
+def test_mcp_water_tools_use_default_serial_and_state_file(
+    mcp_args: argparse.Namespace,
+) -> None:
+    refill_payload = run(
+        _mcp.mark_water_refill_payload(
+            mcp_args,
+            serial=None,
+            tank_ml=1800.0,
+            reserve_ml=200.0,
+            shot_ml=50.0,
+            flush_ml=20.0,
+            state_file=None,
+        )
+    )
+
+    assert refill_payload["experimental"] is True
+    assert refill_payload["serial"] == "DEFAULT"
+    state_file = Path(refill_payload["state_file"])
+    assert state_file == mcp_args.config_file.parent / "water.json"
+    assert json.loads(state_file.read_text(encoding="utf-8"))["machines"]["DEFAULT"][
+        "baseline_total_coffee"
+    ] == 100
+
+    log_payload = run(
+        _mcp.log_water_use_payload(
+            mcp_args,
+            amount_ml=75.0,
+            note="steam",
+            serial=None,
+            state_file=None,
+        )
+    )
+
+    assert log_payload["manual_usage_ml"] == 75.0
+    assert log_payload["note"] == "steam"
+
+    FakeMachine.total_coffee = 105
+    FakeMachine.total_flush = 12
+
+    estimate_payload = run(
+        _mcp.get_water_estimate_payload(
+            mcp_args,
+            serial=None,
+            extra_ml=25.0,
+            tank_ml=None,
+            reserve_ml=None,
+            shot_ml=None,
+            flush_ml=None,
+            state_file=None,
+        )
+    )
+
+    assert estimate_payload["status"] == "ok"
+    assert estimate_payload["estimated_remaining_ml"] == 1410.0
+    assert estimate_payload["usage"] == {
+        "coffee_count": 5,
+        "coffee_ml": 250.0,
+        "flush_count": 2,
+        "flush_ml": 40.0,
+        "manual_ml": 75.0,
+        "extra_ml": 25.0,
+    }
+
+
 def test_call_mcp_tool_redirects_accidental_stdout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -259,3 +340,19 @@ def test_tool_args_disable_interactive_prompts(mcp_args: argparse.Namespace) -> 
     tool_args = _mcp.tool_args(mcp_args)
 
     assert tool_args.no_prompt is True
+
+
+def test_water_tool_args_disable_prompts_and_accept_state_path(
+    mcp_args: argparse.Namespace,
+) -> None:
+    tool_args = _mcp.water_tool_args(
+        mcp_args,
+        serial="EXPLICIT",
+        state_file="custom-water.json",
+        tank_ml=1900.0,
+    )
+
+    assert tool_args.no_prompt is True
+    assert tool_args.serial == "EXPLICIT"
+    assert tool_args.state_file == Path("custom-water.json")
+    assert tool_args.tank_ml == 1900.0
